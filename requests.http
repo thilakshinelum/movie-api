@@ -1,34 +1,62 @@
-### Get all movies
+# Week 2 tests - run from top to bottom after starting the server (npm start)
+
+### 1. Get all movies (200, array)
 GET http://localhost:3000/movies
 
-### Get movie by ID
+### 2. Get one movie (200)
 GET http://localhost:3000/movies/1
 
-### Movie that does not exist
+### 3. Get a missing movie (404 MOVIE_NOT_FOUND)
 GET http://localhost:3000/movies/999
 
-### Create a new movie
+### 4. Create a valid movie (201, server creates id 4)
 POST http://localhost:3000/movies
 Content-Type: application/json
 
 {
-  "title": "Blade Runner",
-  "director": "Ridley Scott",
-  "year": 1982
+  "title": "Arrival",
+  "year": 2016,
+  "genre": "Sci-Fi"
 }
 
-### Check that the new movie appears
-GET http://localhost:3000/movies
-
-### Invalid movie
+### 5. Create an invalid movie (400 VALIDATION_ERROR with details)
 POST http://localhost:3000/movies
 Content-Type: application/json
 
 {
-  "director": "Nobody"
+  "title": "",
+  "year": "not a number"
 }
 
-### BONUS: Update a movie
+### 6. Replace a movie with PUT (200, all fields replaced)
+PUT http://localhost:3000/movies/1
+Content-Type: application/json
+
+{
+  "title": "Inception: Updated Edition",
+  "year": 2010,
+  "genre": "Sci-Fi"
+}
+
+### 7. Invalid incomplete PUT (400, genre and year missing)
+PUT http://localhost:3000/movies/1
+Content-Type: application/json
+
+{
+  "title": "Inception"
+}
+
+### 8. PUT a missing movie (404)
+PUT http://localhost:3000/movies/999
+Content-Type: application/json
+
+{
+  "title": "Nothing",
+  "year": 2000,
+  "genre": "Drama"
+}
+
+### 9. Partially update a movie with PATCH (200, only year changes)
 PATCH http://localhost:3000/movies/1
 Content-Type: application/json
 
@@ -36,11 +64,40 @@ Content-Type: application/json
   "year": 2011
 }
 
-### BONUS: Check the update
-GET http://localhost:3000/movies/1
+### 10. PATCH with an invalid value (400)
+PATCH http://localhost:3000/movies/1
+Content-Type: application/json
 
-### BONUS: Delete a movie
+{
+  "year": 1500
+}
+
+### 11. Filter by genre (200, case-insensitive)
+GET http://localhost:3000/movies?genre=sci-fi
+
+### 12. Filter by minYear (200)
+GET http://localhost:3000/movies?minYear=2010
+
+### 13. Filter and sort (200, only matching movies, oldest first)
+GET http://localhost:3000/movies?genre=Sci-Fi&minYear=2000&sort=year
+
+### 14. Sort by title (200, alphabetical)
+GET http://localhost:3000/movies?sort=title
+
+### 15. No matches (200, empty array)
+GET http://localhost:3000/movies?genre=Musical
+
+### 16. Invalid minYear (400)
+GET http://localhost:3000/movies?minYear=invalid
+
+### 17. Invalid sort value (400)
+GET http://localhost:3000/movies?sort=rating
+
+### 18. Delete an existing movie (204, empty body)
 DELETE http://localhost:3000/movies/1
 
-### BONUS: Check the delete (expect 404)
-GET http://localhost:3000/movies/1
+### 19. Delete the same movie again (404)
+DELETE http://localhost:3000/movies/1
+
+### 20. Unknown route (404 ROUTE_NOT_FOUND)
+GET http://localhost:3000/does-not-exist
