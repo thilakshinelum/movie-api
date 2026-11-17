@@ -1,52 +1,42 @@
-// Movie REST API - Backend Development, Week 2
+// Movie REST API - Backend Development, Week 4 (Express + PostgreSQL)
+
+// Load .env first: db.js reads process.env when the Pool is created
+require("dotenv").config();
+
 const express = require("express");
 const morgan = require("morgan");
+const pool = require("./db");
 
 const app = express();
-const PORT = 3000;
+const PORT = Number(process.env.PORT) || 3001;
 
-// ---------- Middleware (runs before the routes) ----------
-
-// Parses JSON request bodies into req.body
+// ---------- Middleware ----------
 app.use(express.json());
-
-// My own simple logger (Task 4.2). It was used for testing first and
-// is now disabled so that requests are not logged twice with Morgan.
-function simpleLogger(req, res, next) {
-  console.log(req.method, req.originalUrl);
-  next();
-}
-// app.use(simpleLogger);
-
-// Morgan request logger: method, URL, status code and response time
 app.use(morgan("dev"));
 
-// ---------- Data (in memory) ----------
+// ---------- Helpers ----------
 
-let movies = [
-  { id: 1, title: "Inception", year: 2010, genre: "Sci-Fi" },
-  { id: 2, title: "The Matrix", year: 1999, genre: "Sci-Fi" },
-  { id: 3, title: "Parasite", year: 2019, genre: "Thriller" },
-];
+// Columns returned to the client. release_year is renamed to year so the
+// JSON stays the same as before (the REST API contract does not change).
+const MOVIE_COLUMNS = "id, title, director, release_year AS year";
 
-let nextId = 4; // the server creates the ids
-
-// ---------- Helper functions ----------
-
-// Returns a list of validation errors (empty list = valid).
-// partial = true is used for PATCH, where fields are optional.
+// Validation rules (same idea as Week 2). partial = true for PATCH.
 function validateMovie(body, partial = false) {
   const errors = [];
   const maximumYear = new Date().getFullYear() + 5;
 
-  if (!partial && body.title === undefined) {
-    errors.push("title is required");
-  }
-  if (
-    body.title !== undefined &&
-    (typeof body.title !== "string" || body.title.trim().length === 0)
-  ) {
-    errors.push("title must be a non-empty string");
+  for (const field of ["title", "director"]) {
+    if (!partial && body[field] === undefined) {
+      errors.push(`${field} is required`);
+    }
+    if (
+      body[field] !== undefined &&
+      (typeof body[field] !== "string" || body[field].trim().length === 0)
+    ) {
+      errors.push(`${field} must be a non-empty string`);
+    } else if (typeof body[field] === "string" && body[field].length > 200) {
+      errors.push(`${field} must be at most 200 characters`);
+    }
   }
 
   if (!partial && body.year === undefined) {
@@ -54,190 +44,258 @@ function validateMovie(body, partial = false) {
   }
   if (
     body.year !== undefined &&
-    (!Number.isInteger(body.year) ||
-      body.year < 1888 ||
-      body.year > maximumYear)
+    (!Number.isInteger(body.year) || body.year < 1888 || body.year > maximumYear)
   ) {
     errors.push("year must be a valid integer");
-  }
-
-  if (!partial && body.genre === undefined) {
-    errors.push("genre is required");
-  }
-  if (
-    body.genre !== undefined &&
-    (typeof body.genre !== "string" || body.genre.trim().length === 0)
-  ) {
-    errors.push("genre must be a non-empty string");
   }
 
   return errors;
 }
 
-// Consistent error responses
-function sendValidationError(res, details) {
-  return res.status(400).json({
-    error: {
-      code: "VALIDATION_ERROR",
-      message: "Movie data is invalid",
-      details,
-    },
-  });
+// Returns the id as a number, or null if it is not a valid positive integer
+function parseId(value) {
+  if (!/^\d+$/.test(value)) return null;
+  const id = Number(value);
+  // PostgreSQL INTEGER maximum value
+  if (id < 1 || id > 2147483647) return null;
+  return id;
 }
 
-function sendMovieNotFound(res) {
-  return res.status(404).json({
-    error: { code: "MOVIE_NOT_FOUND", message: "Movie not found" },
-  });
+function sendError(res, status, code, message, details) {
+  const error = { code, message };
+  if (details) error.details = details;
+  return res.status(status).json({ error });
 }
 
-function sendInvalidQuery(res, message) {
-  return res.status(400).json({
-    error: { code: "INVALID_QUERY_PARAMETER", message },
-  });
-}
-
-function findMovie(idParam) {
-  return movies.find((m) => m.id === Number(idParam));
-}
+const sendValidationError = (res, details) =>
+  sendError(res, 400, "VALIDATION_ERROR", "Movie data is invalid", details);
+const sendInvalidId = (res) =>
+  sendError(res, 400, "INVALID_ID", "id must be a positive integer");
+const sendMovieNotFound = (res) =>
+  sendError(res, 404, "MOVIE_NOT_FOUND", "Movie not found");
+const sendInvalidQuery = (res, message) =>
+  sendError(res, 400, "INVALID_QUERY_PARAMETER", message);
 
 // ---------- Routes ----------
 
-// GET /movies  (optional: ?genre=Sci-Fi&minYear=2000&sort=year|title)
-app.get("/movies", (req, res) => {
-  const { genre, minYear, sort } = req.query;
-
-  // A repeated parameter (?genre=a&genre=b) arrives as an array -> reject it
-  for (const [name, value] of Object.entries({ genre, minYear, sort })) {
-    if (value !== undefined && typeof value !== "string") {
-      return sendInvalidQuery(res, `${name} must be given only once`);
-    }
+// Health check: proves that Express can run SQL in PostgreSQL
+app.get("/health/database", async (req, res, next) => {
+  try {
+    const result = await pool.query("SELECT NOW() AS database_time");
+    res.json({
+      status: "ok",
+      databaseTime: result.rows[0].database_time,
+    });
+  } catch (error) {
+    next(error);
   }
+});
 
-  // Work on a copy so the original array is never changed
-  let result = [...movies];
+// GET /movies  (optional: ?director=nolan&minYear=2000&sortBy=id|year|title)
+app.get("/movies", async (req, res, next) => {
+  try {
+    const { director, minYear, sortBy } = req.query;
 
-  if (genre !== undefined) {
-    result = result.filter(
-      (m) => m.genre.toLowerCase() === genre.toLowerCase()
+    // A repeated parameter (?director=a&director=b) arrives as an array
+    for (const [name, value] of Object.entries({ director, minYear, sortBy })) {
+      if (value !== undefined && typeof value !== "string") {
+        return sendInvalidQuery(res, `${name} must be given only once`);
+      }
+    }
+
+    const conditions = [];
+    const values = [];
+
+    if (director !== undefined) {
+      // Case-insensitive "contains" search; the text is a parameter
+      values.push(`%${director}%`);
+      conditions.push(`director ILIKE $${values.length}`);
+    }
+
+    if (minYear !== undefined) {
+      if (!/^\d+$/.test(minYear)) {
+        return sendInvalidQuery(res, "minYear must be an integer");
+      }
+      values.push(Number(minYear));
+      conditions.push(`release_year >= $${values.length}`);
+    }
+
+    // Column names cannot be $1 parameters, so only allow-listed values
+    // from the server can become part of the SQL text.
+    const sortColumns = { id: "id", year: "release_year", title: "title" };
+    let orderBy = "id";
+    if (sortBy !== undefined) {
+      if (!Object.hasOwn(sortColumns, sortBy)) {
+        return sendInvalidQuery(res, "sortBy must be 'id', 'year' or 'title'");
+      }
+      orderBy = sortColumns[sortBy];
+    }
+
+    const where = conditions.length ? `WHERE ${conditions.join(" AND ")}` : "";
+    const result = await pool.query(
+      `SELECT ${MOVIE_COLUMNS} FROM movies ${where} ORDER BY ${orderBy}, id`,
+      values
     );
-  }
 
-  if (minYear !== undefined) {
-    const min = Number(minYear);
-    if (minYear.trim() === "" || !Number.isInteger(min)) {
-      return sendInvalidQuery(res, "minYear must be an integer");
-    }
-    result = result.filter((m) => m.year >= min);
+    res.status(200).json(result.rows);
+  } catch (error) {
+    next(error);
   }
-
-  if (sort !== undefined) {
-    if (sort === "year") {
-      result.sort((a, b) => a.year - b.year);
-    } else if (sort === "title") {
-      result.sort((a, b) => a.title.localeCompare(b.title));
-    } else {
-      return sendInvalidQuery(res, "sort must be 'year' or 'title'");
-    }
-  }
-
-  res.status(200).json(result);
 });
 
 // GET /movies/:id
-app.get("/movies/:id", (req, res) => {
-  const movie = findMovie(req.params.id);
-  if (!movie) return sendMovieNotFound(res);
-  res.status(200).json(movie);
+app.get("/movies/:id", async (req, res, next) => {
+  try {
+    const id = parseId(req.params.id);
+    if (id === null) return sendInvalidId(res);
+
+    const result = await pool.query(
+      `SELECT ${MOVIE_COLUMNS} FROM movies WHERE id = $1`,
+      [id]
+    );
+
+    if (result.rows.length === 0) return sendMovieNotFound(res);
+    res.status(200).json(result.rows[0]);
+  } catch (error) {
+    next(error);
+  }
 });
 
-// POST /movies -> create (all fields required)
-app.post("/movies", (req, res) => {
-  const body = req.body || {};
-  const errors = validateMovie(body, false);
-  if (errors.length > 0) return sendValidationError(res, errors);
+// POST /movies -> PostgreSQL generates the id
+app.post("/movies", async (req, res, next) => {
+  try {
+    const body = req.body || {};
+    const errors = validateMovie(body, false);
+    if (errors.length > 0) return sendValidationError(res, errors);
 
-  const newMovie = {
-    id: nextId++,
-    title: body.title.trim(),
-    year: body.year,
-    genre: body.genre.trim(),
-  };
-  movies.push(newMovie);
-  res.status(201).json(newMovie);
+    const result = await pool.query(
+      `INSERT INTO movies (title, director, release_year)
+       VALUES ($1, $2, $3)
+       RETURNING ${MOVIE_COLUMNS}`,
+      [body.title.trim(), body.director.trim(), body.year]
+    );
+
+    res.status(201).json(result.rows[0]);
+  } catch (error) {
+    next(error);
+  }
 });
 
-// PUT /movies/:id -> replace the whole movie (all fields required)
-app.put("/movies/:id", (req, res) => {
-  const movie = findMovie(req.params.id);
-  if (!movie) return sendMovieNotFound(res);
+// PUT /movies/:id -> full replacement (all fields required)
+app.put("/movies/:id", async (req, res, next) => {
+  try {
+    const id = parseId(req.params.id);
+    if (id === null) return sendInvalidId(res);
 
-  const body = req.body || {};
-  const errors = validateMovie(body, false);
-  if (errors.length > 0) return sendValidationError(res, errors);
+    const body = req.body || {};
+    const errors = validateMovie(body, false);
+    if (errors.length > 0) return sendValidationError(res, errors);
 
-  // Replace all editable fields, keep the id
-  movie.title = body.title.trim();
-  movie.year = body.year;
-  movie.genre = body.genre.trim();
+    const result = await pool.query(
+      `UPDATE movies
+       SET title = $1, director = $2, release_year = $3
+       WHERE id = $4
+       RETURNING ${MOVIE_COLUMNS}`,
+      [body.title.trim(), body.director.trim(), body.year, id]
+    );
 
-  res.status(200).json(movie);
+    if (result.rows.length === 0) return sendMovieNotFound(res);
+    res.status(200).json(result.rows[0]);
+  } catch (error) {
+    next(error);
+  }
 });
 
-// PATCH /movies/:id -> change only the fields that are sent
-app.patch("/movies/:id", (req, res) => {
-  const movie = findMovie(req.params.id);
-  if (!movie) return sendMovieNotFound(res);
+// PATCH /movies/:id -> partial update with controlled dynamic SQL
+app.patch("/movies/:id", async (req, res, next) => {
+  try {
+    const id = parseId(req.params.id);
+    if (id === null) return sendInvalidId(res);
 
-  const body = req.body || {};
-  const errors = validateMovie(body, true);
-  if (errors.length > 0) return sendValidationError(res, errors);
+    const body = req.body || {};
 
-  // Check for undefined, not truthy/falsy
-  if (body.title !== undefined) movie.title = body.title.trim();
-  if (body.year !== undefined) movie.year = body.year;
-  if (body.genre !== undefined) movie.genre = body.genre.trim();
+    // Allow-list: JSON property -> database column (defined by the server)
+    const allowedFields = {
+      title: "title",
+      director: "director",
+      year: "release_year",
+    };
 
-  res.status(200).json(movie);
+    const setClauses = [];
+    const values = [];
+
+    for (const [field, column] of Object.entries(allowedFields)) {
+      if (body[field] !== undefined) {
+        const value = typeof body[field] === "string" ? body[field].trim() : body[field];
+        values.push(value);
+        setClauses.push(`${column} = $${values.length}`);
+      }
+    }
+
+    if (setClauses.length === 0) {
+      return sendValidationError(res, [
+        "Provide at least one of: title, director, year",
+      ]);
+    }
+
+    const errors = validateMovie(body, true);
+    if (errors.length > 0) return sendValidationError(res, errors);
+
+    values.push(id);
+    const result = await pool.query(
+      `UPDATE movies
+       SET ${setClauses.join(", ")}
+       WHERE id = $${values.length}
+       RETURNING ${MOVIE_COLUMNS}`,
+      values
+    );
+
+    if (result.rows.length === 0) return sendMovieNotFound(res);
+    res.status(200).json(result.rows[0]);
+  } catch (error) {
+    next(error);
+  }
 });
 
-// DELETE /movies/:id -> 204 No Content (no body)
-app.delete("/movies/:id", (req, res) => {
-  const index = movies.findIndex((m) => m.id === Number(req.params.id));
-  if (index === -1) return sendMovieNotFound(res);
+// DELETE /movies/:id -> 204 No Content (no JSON body)
+app.delete("/movies/:id", async (req, res, next) => {
+  try {
+    const id = parseId(req.params.id);
+    if (id === null) return sendInvalidId(res);
 
-  movies.splice(index, 1);
-  res.status(204).send();
+    const result = await pool.query(
+      "DELETE FROM movies WHERE id = $1 RETURNING id",
+      [id]
+    );
+
+    if (result.rows.length === 0) return sendMovieNotFound(res);
+    res.status(204).send();
+  } catch (error) {
+    next(error);
+  }
 });
 
 // ---------- Middleware after the routes ----------
 
 // Unknown routes -> JSON 404
 app.use((req, res) => {
-  res.status(404).json({
-    error: {
-      code: "ROUTE_NOT_FOUND",
-      message: "The requested route does not exist",
-    },
-  });
+  sendError(res, 404, "ROUTE_NOT_FOUND", "The requested route does not exist");
 });
 
-// Error handler (4 parameters) -> must be registered last
+// Central error handler: database and other unexpected errors end up here
 app.use((err, req, res, next) => {
-  // Broken JSON in the request body is the client's mistake -> 400
   if (err.type === "entity.parse.failed") {
-    return res.status(400).json({
-      error: { code: "INVALID_JSON", message: "Request body is not valid JSON" },
-    });
+    return sendError(res, 400, "INVALID_JSON", "Request body is not valid JSON");
   }
 
+  // Log the details on the server, but do not send them to the client
   console.error(err);
-  res.status(500).json({
-    error: {
-      code: "INTERNAL_SERVER_ERROR",
-      message: "An unexpected server error occurred",
-    },
-  });
+  sendError(
+    res,
+    500,
+    "INTERNAL_SERVER_ERROR",
+    "An unexpected server error occurred"
+  );
 });
 
 app.listen(PORT, () => {

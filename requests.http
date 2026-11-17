@@ -1,26 +1,35 @@
-# Week 2 tests - run from top to bottom after starting the server (npm start)
+# Week 4 tests (Express + PostgreSQL)
+# 1) Run database.sql in pgAdmin  2) npm start  3) run from top to bottom
 
-### 1. Get all movies (200, array)
-GET http://localhost:3000/movies
+@baseUrl = http://localhost:3001
 
-### 2. Get one movie (200)
-GET http://localhost:3000/movies/1
+### 1. Database health (200, database time)
+GET {{baseUrl}}/health/database
 
-### 3. Get a missing movie (404 MOVIE_NOT_FOUND)
-GET http://localhost:3000/movies/999
+### 2. Get all movies (200, array from PostgreSQL)
+GET {{baseUrl}}/movies
 
-### 4. Create a valid movie (201, server creates id 4)
-POST http://localhost:3000/movies
+### 3. Get an existing movie (200)
+GET {{baseUrl}}/movies/1
+
+### 4. Get a missing movie (404)
+GET {{baseUrl}}/movies/999
+
+### 5. Invalid id (400)
+GET {{baseUrl}}/movies/abc
+
+### 6. Create a valid movie (201, PostgreSQL creates the id)
+POST {{baseUrl}}/movies
 Content-Type: application/json
 
 {
   "title": "Arrival",
-  "year": 2016,
-  "genre": "Sci-Fi"
+  "director": "Denis Villeneuve",
+  "year": 2016
 }
 
-### 5. Create an invalid movie (400 VALIDATION_ERROR with details)
-POST http://localhost:3000/movies
+### 7. Create an invalid movie (400)
+POST {{baseUrl}}/movies
 Content-Type: application/json
 
 {
@@ -28,76 +37,62 @@ Content-Type: application/json
   "year": "not a number"
 }
 
-### 6. Replace a movie with PUT (200, all fields replaced)
-PUT http://localhost:3000/movies/1
+### 8. Replace a movie with PUT (200)
+PUT {{baseUrl}}/movies/1
 Content-Type: application/json
 
 {
   "title": "Inception: Updated Edition",
-  "year": 2010,
-  "genre": "Sci-Fi"
+  "director": "Christopher Nolan",
+  "year": 2010
 }
 
-### 7. Invalid incomplete PUT (400, genre and year missing)
-PUT http://localhost:3000/movies/1
+### 9. Incomplete PUT (400)
+PUT {{baseUrl}}/movies/1
 Content-Type: application/json
 
 {
   "title": "Inception"
 }
 
-### 8. PUT a missing movie (404)
-PUT http://localhost:3000/movies/999
-Content-Type: application/json
-
-{
-  "title": "Nothing",
-  "year": 2000,
-  "genre": "Drama"
-}
-
-### 9. Partially update a movie with PATCH (200, only year changes)
-PATCH http://localhost:3000/movies/1
+### 10. PATCH one field (200, only year changes)
+PATCH {{baseUrl}}/movies/1
 Content-Type: application/json
 
 {
   "year": 2011
 }
 
-### 10. PATCH with an invalid value (400)
-PATCH http://localhost:3000/movies/1
+### 11. Empty PATCH (400)
+PATCH {{baseUrl}}/movies/1
+Content-Type: application/json
+
+{}
+
+### 12. Filter by director (200, case-insensitive)
+GET {{baseUrl}}/movies?director=nolan
+
+### 13. Filter by year and sort by year (200)
+GET {{baseUrl}}/movies?minYear=2000&sortBy=year
+
+### 14. Sort by title (200)
+GET {{baseUrl}}/movies?sortBy=title
+
+### 15. Invalid sortBy (400)
+GET {{baseUrl}}/movies?sortBy=rating
+
+### 16. Delete a movie (204, no body)
+DELETE {{baseUrl}}/movies/2
+
+### 17. Delete the same movie again (404)
+DELETE {{baseUrl}}/movies/2
+
+### 18. Persistence test: create a movie, then restart Express and run #2 again
+POST {{baseUrl}}/movies
 Content-Type: application/json
 
 {
-  "year": 1500
+  "title": "Dune",
+  "director": "Denis Villeneuve",
+  "year": 2021
 }
-
-### 11. Filter by genre (200, case-insensitive)
-GET http://localhost:3000/movies?genre=sci-fi
-
-### 12. Filter by minYear (200)
-GET http://localhost:3000/movies?minYear=2010
-
-### 13. Filter and sort (200, only matching movies, oldest first)
-GET http://localhost:3000/movies?genre=Sci-Fi&minYear=2000&sort=year
-
-### 14. Sort by title (200, alphabetical)
-GET http://localhost:3000/movies?sort=title
-
-### 15. No matches (200, empty array)
-GET http://localhost:3000/movies?genre=Musical
-
-### 16. Invalid minYear (400)
-GET http://localhost:3000/movies?minYear=invalid
-
-### 17. Invalid sort value (400)
-GET http://localhost:3000/movies?sort=rating
-
-### 18. Delete an existing movie (204, empty body)
-DELETE http://localhost:3000/movies/1
-
-### 19. Delete the same movie again (404)
-DELETE http://localhost:3000/movies/1
-
-### 20. Unknown route (404 ROUTE_NOT_FOUND)
-GET http://localhost:3000/does-not-exist
