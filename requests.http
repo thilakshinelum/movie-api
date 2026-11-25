@@ -1,43 +1,64 @@
-# Week 4 tests (Express + PostgreSQL)
+# Week 5 tests: modular Express + Joi + PostgreSQL
 # 1) Run database.sql in pgAdmin  2) npm start  3) run from top to bottom
 
 @baseUrl = http://localhost:3001
 
-### 1. Database health (200, database time)
+### 1. Database health (200)
 GET {{baseUrl}}/health/database
 
-### 2. Get all movies (200, array from PostgreSQL)
+### 2. GET all movies (200)
 GET {{baseUrl}}/movies
 
-### 3. Get an existing movie (200)
+### 3. GET existing movie (200)
 GET {{baseUrl}}/movies/1
 
-### 4. Get a missing movie (404)
+### 4. GET missing movie (404)
 GET {{baseUrl}}/movies/999
 
-### 5. Invalid id (400)
+### 5. Invalid movie id (400, validateMovieId)
 GET {{baseUrl}}/movies/abc
 
-### 6. Create a valid movie (201, PostgreSQL creates the id)
+### 6. Valid POST (201 + Location header)
 POST {{baseUrl}}/movies
 Content-Type: application/json
 
 {
-  "title": "Arrival",
+  "title": "  Arrival  ",
   "director": "Denis Villeneuve",
   "year": 2016
 }
 
-### 7. Create an invalid movie (400)
+### 7. Missing required POST field (400)
 POST {{baseUrl}}/movies
 Content-Type: application/json
 
 {
-  "title": "",
-  "year": "not a number"
+  "title": "Blade Runner",
+  "year": 1982
 }
 
-### 8. Replace a movie with PUT (200)
+### 8. Wrong data type (400)
+POST {{baseUrl}}/movies
+Content-Type: application/json
+
+{
+  "title": "Blade Runner",
+  "director": "Ridley Scott",
+  "year": "1982"
+}
+
+### 9. Unknown property (400)
+POST {{baseUrl}}/movies
+Content-Type: application/json
+
+{
+  "title": "Blade Runner",
+  "director": "Ridley Scott",
+  "year": 1982,
+  "rating": 5
+}
+
+### 10. Complete PUT (200)
 PUT {{baseUrl}}/movies/1
 Content-Type: application/json
 
@@ -47,7 +68,7 @@ Content-Type: application/json
   "year": 2010
 }
 
-### 9. Incomplete PUT (400)
+### 11. Incomplete PUT (400)
 PUT {{baseUrl}}/movies/1
 Content-Type: application/json
 
@@ -55,7 +76,7 @@ Content-Type: application/json
   "title": "Inception"
 }
 
-### 10. PATCH one field (200, only year changes)
+### 12. Valid PATCH with one field (200)
 PATCH {{baseUrl}}/movies/1
 Content-Type: application/json
 
@@ -63,36 +84,23 @@ Content-Type: application/json
   "year": 2011
 }
 
-### 11. Empty PATCH (400)
+### 13. Empty PATCH (400)
 PATCH {{baseUrl}}/movies/1
 Content-Type: application/json
 
 {}
 
-### 12. Filter by director (200, case-insensitive)
-GET {{baseUrl}}/movies?director=nolan
-
-### 13. Filter by year and sort by year (200)
+### 14. Filter and sort (200)
 GET {{baseUrl}}/movies?minYear=2000&sortBy=year
-
-### 14. Sort by title (200)
-GET {{baseUrl}}/movies?sortBy=title
 
 ### 15. Invalid sortBy (400)
 GET {{baseUrl}}/movies?sortBy=rating
 
-### 16. Delete a movie (204, no body)
+### 16. DELETE existing movie (204)
 DELETE {{baseUrl}}/movies/2
 
-### 17. Delete the same movie again (404)
+### 17. Repeat DELETE (404)
 DELETE {{baseUrl}}/movies/2
 
-### 18. Persistence test: create a movie, then restart Express and run #2 again
-POST {{baseUrl}}/movies
-Content-Type: application/json
-
-{
-  "title": "Dune",
-  "director": "Denis Villeneuve",
-  "year": 2021
-}
+### 18. Unknown route (404)
+GET {{baseUrl}}/does-not-exist

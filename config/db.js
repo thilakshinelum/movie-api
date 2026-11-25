@@ -1,6 +1,9 @@
 // PostgreSQL connection pool (node-postgres)
-// The values come from environment variables, which dotenv loads from .env
-const { Pool } = require("pg");
+// dotenv/config loads .env before the Pool reads process.env
+import "dotenv/config";
+import pg from "pg";
+
+const { Pool } = pg;
 
 const pool = new Pool({
   host: process.env.PGHOST,
@@ -10,10 +13,10 @@ const pool = new Pool({
   password: process.env.PGPASSWORD,
 });
 
-// If PostgreSQL closes an idle connection (for example the server is
-// stopped), log it instead of letting the error crash the whole app.
+// Log errors on idle connections (e.g. PostgreSQL stopped) instead of
+// letting them crash the whole application.
 pool.on("error", (error) => {
   console.error("Unexpected PostgreSQL pool error:", error.message);
 });
 
-module.exports = pool;
+export default pool;
